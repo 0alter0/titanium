@@ -1,9 +1,10 @@
 package kaptainwutax.tungsten.render;
 
+import kaptainwutax.tungsten.TungstenModDataContainer;
 import net.minecraft.client.render.BufferBuilder;
-import net.minecraft.client.render.Tessellator;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.debug.gizmo.GizmoDrawing;
 
 public class Line extends Renderer {
 
@@ -26,26 +27,25 @@ public class Line extends Renderer {
     }
 
     @Override
-    public void render() {
-        if(this.start == null || this.end == null || this.color == null)return;
-        Vec3d camPos = this.mc.gameRenderer.getCamera().getPos();
-        Tessellator tessellator = Tessellator.getInstance();
-        BufferBuilder buffer = tessellator.getBuffer();
-        this.putVertex(buffer, camPos, this.start);
-        this.putVertex(buffer, camPos, this.end);
+    public void render(BufferBuilder builder) {
+        if(TungstenModDataContainer.gameRenderer == null || this.start == null || this.end == null || this.color == null)return;
+//        Vec3d camPos = TungstenModDataContainer.gameRenderer.getCamera().getCameraPos();
+//        this.putVertex(builder, camPos, this.start);
+//        this.putVertex(builder, camPos, this.end);
+        GizmoDrawing.line(this.start, this.end, this.color.toARGB(255)).ignoreOcclusion();
     }
 
     protected void putVertex(BufferBuilder buffer, Vec3d camPos, Vec3d pos) {
         buffer.vertex(
-                pos.getX() - camPos.x,
-                pos.getY() - camPos.y,
-                pos.getZ() - camPos.z
+                (float) (pos.getX() - camPos.x),
+                (float) (pos.getY() - camPos.y),
+                (float) (pos.getZ() - camPos.z)
         ).color(
                 this.color.getFRed(),
                 this.color.getFGreen(),
                 this.color.getFBlue(),
                 1.0F
-        ).next();
+        );
     }
 
     @Override
@@ -53,7 +53,7 @@ public class Line extends Renderer {
         double x = (this.end.getX() - this.start.getX()) / 2 + this.start.getX();
         double y = (this.end.getY() - this.start.getY()) / 2 + this.start.getY();
         double z = (this.end.getZ() - this.start.getZ()) / 2 + this.start.getZ();
-        return new BlockPos(x, y, z);
+        return new BlockPos((int) x, (int) y, (int) z);
     }
 
 }

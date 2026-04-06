@@ -1,13 +1,14 @@
 package kaptainwutax.tungsten.mixin;
 
-import net.minecraft.entity.Entity;
-import net.minecraft.fluid.Fluid;
-import net.minecraft.tag.TagKey;
-import net.minecraft.util.math.Vec3d;
+import java.util.Set;
+
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
-import java.util.Set;
+import net.minecraft.entity.Entity;
+import net.minecraft.fluid.Fluid;
+import net.minecraft.registry.tag.TagKey;
+import net.minecraft.util.math.Vec3d;
 
 @Mixin(Entity.class)
 public interface AccessorEntity {

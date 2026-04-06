@@ -1,5 +1,6 @@
 package kaptainwutax.tungsten.render;
 
+import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.util.math.*;
 
 public class Cuboid extends Renderer {
@@ -39,18 +40,19 @@ public class Cuboid extends Renderer {
     }
 
     @Override
-    public void render() {
+    public void render(BufferBuilder builder) {
         if(this.start == null || this.size == null || this.edges == null)return;
 
         for(Line edge: this.edges) {
             if(edge == null)continue;
-            edge.render();
+            edge.render(builder);
         }
     }
 
     @Override
     public BlockPos getPos() {
-        return new BlockPos(this.start.add(this.size.getX() / 2, this.size.getY() / 2, this.size.getZ() / 2));
+    	Vec3d vec = this.start.add(this.size.getX() / 2, this.size.getY() / 2, this.size.getZ() / 2);
+        return new BlockPos((int) vec.x, (int) vec.y, (int) vec.z);
     }
 
 }

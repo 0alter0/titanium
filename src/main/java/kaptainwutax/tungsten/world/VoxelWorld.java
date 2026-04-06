@@ -1,18 +1,25 @@
 package kaptainwutax.tungsten.world;
 
+import java.util.List;
+
+import org.jetbrains.annotations.Nullable;
+
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.fluid.FluidState;
+import net.minecraft.registry.DynamicRegistryManager;
+import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.resource.featuretoggle.FeatureSet;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
-import net.minecraft.util.registry.RegistryEntry;
 import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.WorldView;
+import net.minecraft.world.attribute.EnvironmentAttributeAccess;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.biome.source.BiomeAccess;
 import net.minecraft.world.border.WorldBorder;
@@ -20,9 +27,6 @@ import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.ChunkStatus;
 import net.minecraft.world.chunk.light.LightingProvider;
 import net.minecraft.world.dimension.DimensionType;
-import org.jetbrains.annotations.Nullable;
-
-import java.util.List;
 
 public class VoxelWorld implements WorldView {
 
@@ -135,5 +139,23 @@ public class VoxelWorld implements WorldView {
     public BlockEntity getBlockEntity(BlockPos pos) {
         return this.parent.getBlockEntity(pos);
     }
+
+	@Override
+	public DynamicRegistryManager getRegistryManager() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FeatureSet getEnabledFeatures() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public EnvironmentAttributeAccess getEnvironmentAttributes() {
+		// TODO Auto-generated method stub
+		return null;
+	}
 
 }

@@ -4,26 +4,12 @@ import java.util.Arrays;
 
 import kaptainwutax.tungsten.path.Node;
 
-/**
- * A binary heap implementation of an open set. This is the one used in the AStarPathFinder.
- *
- * @author leijurv
- */
 public final class BinaryHeapOpenSet implements IOpenSet {
 
-    /**
-     * The initial capacity of the heap (2^10)
-     */
     private static final int INITIAL_CAPACITY = 1024;
 
-    /**
-     * The array backing the heap
-     */
     private Node[] array;
 
-    /**
-     * The size of the heap
-     */
     private int size;
 
     public BinaryHeapOpenSet() {

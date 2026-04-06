@@ -1,32 +1,81 @@
 package kaptainwutax.tungsten.agent;
 
+import java.util.*;
+
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableList.Builder;
 import com.google.common.collect.ImmutableMap;
+
+import it.unimi.dsi.fastutil.floats.FloatArraySet;
+import it.unimi.dsi.fastutil.floats.FloatArrays;
+import it.unimi.dsi.fastutil.floats.FloatSet;
 import it.unimi.dsi.fastutil.objects.Object2DoubleArrayMap;
 import it.unimi.dsi.fastutil.objects.Object2DoubleMap;
+import kaptainwutax.tungsten.Debug;
+import kaptainwutax.tungsten.TungstenMod;
+import kaptainwutax.tungsten.TungstenModDataContainer;
+import kaptainwutax.tungsten.TungstenModRenderContainer;
+import kaptainwutax.tungsten.helpers.render.RenderHelper;
 import kaptainwutax.tungsten.mixin.AccessorEntity;
 import kaptainwutax.tungsten.mixin.AccessorLivingEntity;
+import kaptainwutax.tungsten.path.Node;
 import kaptainwutax.tungsten.path.PathInput;
-import net.minecraft.block.*;
-import net.minecraft.client.MinecraftClient;
+import kaptainwutax.tungsten.render.Color;
+import kaptainwutax.tungsten.render.Cuboid;
+import net.minecraft.block.AbstractFireBlock;
+import net.minecraft.block.AbstractPressurePlateBlock;
+import net.minecraft.block.BedBlock;
+import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
+import net.minecraft.block.BubbleColumnBlock;
+import net.minecraft.block.CactusBlock;
+import net.minecraft.block.CampfireBlock;
+import net.minecraft.block.CauldronBlock;
+import net.minecraft.block.CobwebBlock;
+import net.minecraft.block.EndPortalBlock;
+import net.minecraft.block.FarmlandBlock;
+import net.minecraft.block.FenceGateBlock;
+import net.minecraft.block.HayBlock;
+import net.minecraft.block.HoneyBlock;
+import net.minecraft.block.LadderBlock;
+import net.minecraft.block.MagmaBlock;
+import net.minecraft.block.NetherPortalBlock;
+import net.minecraft.block.SlimeBlock;
+import net.minecraft.block.SweetBerryBushBlock;
+import net.minecraft.block.TrapdoorBlock;
+import net.minecraft.block.TripwireBlock;
+import net.minecraft.block.TurtleEggBlock;
+import net.minecraft.block.WitherRoseBlock;
 import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.entity.*;
+import net.minecraft.client.option.GameOptions;
+import net.minecraft.entity.EntityDimensions;
+import net.minecraft.entity.EntityPose;
+import net.minecraft.entity.MovementType;
 import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.entity.player.HungerManager;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.fluid.Fluid;
 import net.minecraft.fluid.FluidState;
-import net.minecraft.tag.BlockTags;
-import net.minecraft.tag.FluidTags;
-import net.minecraft.tag.TagKey;
+import net.minecraft.registry.tag.BlockTags;
+import net.minecraft.registry.tag.EntityTypeTags;
+import net.minecraft.registry.tag.FluidTags;
+import net.minecraft.registry.tag.TagKey;
+import net.minecraft.util.PlayerInput;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.*;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Direction.Axis;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec2f;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.util.shape.VoxelShapes;
 import net.minecraft.world.RaycastContext;
 import net.minecraft.world.WorldView;
-
-import java.util.*;
+import net.minecraft.world.dimension.DimensionTypes;
 
 public class Agent {
 
@@ -39,7 +88,7 @@ public class Agent {
         ImmutableMap.<EntityPose, EntityDimensions>builder()
         .put(EntityPose.STANDING, STANDING_DIMENSIONS)
         .put(EntityPose.SLEEPING, SLEEPING_DIMENSIONS)
-        .put(EntityPose.FALL_FLYING, EntityDimensions.changing(0.6f, 0.6f))
+        .put(EntityPose.GLIDING, EntityDimensions.changing(0.6f, 0.6f))
         .put(EntityPose.SWIMMING, EntityDimensions.changing(0.6f, 0.6f))
         .put(EntityPose.SPIN_ATTACK, EntityDimensions.changing(0.6f, 0.6f))
         .put(EntityPose.CROUCHING, EntityDimensions.changing(0.6f, 1.5f))
@@ -56,6 +105,7 @@ public class Agent {
 
     public EntityPose pose;
     public boolean inSneakingPose;
+    public boolean isDamaged = false;
     public boolean usingItem;
 
     public float sidewaysSpeed;
@@ -84,12 +134,13 @@ public class Agent {
     public boolean swimming; //flag 4
     public boolean fallFlying; //flag 7
     public float stepHeight = 0.6F;
-    public float fallDistance;
+    public double fallDistance;
     public boolean touchingWater;
     public boolean isSubmergedInWater;
     public boolean horizontalCollision;
     public boolean verticalCollision;
     public boolean collidedSoftly;
+    public boolean slimeBounce;
 
     public boolean jumping;
 
@@ -114,6 +165,14 @@ public class Agent {
     public Vec3d getPos() {
         return new Vec3d(this.posX, this.posY, this.posZ);
     }
+    
+    public BlockPos getBlockPos() {
+        return new BlockPos(this.blockX, this.blockY, this.blockZ);
+    }
+    
+    public BlockState getBlockState(WorldView world) {
+    	return world.getBlockState(getBlockPos());
+    }
 
     public void setPos(double x, double y, double z) {
         this.posX = x;
@@ -122,7 +181,16 @@ public class Agent {
         this.blockX = MathHelper.floor(x);
         this.blockY = MathHelper.floor(y);
         this.blockZ = MathHelper.floor(z);
+//		this.setBoundingBox(this.calculateBoundingBox());
     }
+    
+    public final void setBoundingBox(Box boundingBox) {
+		this.box = boundingBox;
+	}
+    
+    protected Box calculateBoundingBox() {
+		return this.dimensions.getBoxAt(this.getPos());
+	}
 
     public Agent tick(WorldView world) {
         this.tickPlayer(world);
@@ -176,7 +244,7 @@ public class Agent {
     public boolean updateWaterState(WorldView world) {
         this.fluidHeight.clear();
         this.checkWaterState(world);
-        double d = world.getDimension().ultrawarm() ? 0.007D : 0.0023333333333333335D;
+        double d = world.getDimension().toString().equals(DimensionTypes.THE_NETHER.toString()) ? 0.007D : 0.0023333333333333335D;
         boolean bl = this.updateMovementInFluid(world, FluidTags.LAVA, d);
         return this.touchingWater || bl;
     }
@@ -184,9 +252,9 @@ public class Agent {
     private void updateSubmergedInWaterState(WorldView world) {
         this.isSubmergedInWater = this.isSubmergedIn(FluidTags.WATER);
         this.submergedFluids.clear();
-        double d = this.getEyeY() - 0.1111111119389534D;
+        double d = this.getEyeY();
 
-        BlockPos blockPos = new BlockPos(this.posX, d, this.posZ);
+        BlockPos blockPos = new BlockPos((int) this.posX, (int) d, (int) this.posZ);
         FluidState fluidState = world.getFluidState(blockPos);
         double e = (float)blockPos.getY() + fluidState.getHeight(world, blockPos);
 
@@ -217,7 +285,7 @@ public class Agent {
         EntityPose newPose;
 
         if(this.fallFlying) {
-            newPose = EntityPose.FALL_FLYING;
+            newPose = EntityPose.GLIDING;
         } else {
             if(this.sleeping) {
                 newPose = EntityPose.SLEEPING;
@@ -225,7 +293,7 @@ public class Agent {
                 if(this.swimming) {
                     newPose = EntityPose.SWIMMING;
                 } else {
-                    if(this.input.sneaking) {
+                    if(this.input.playerInput.sneak()) {
                         newPose = EntityPose.CROUCHING;
                     } else {
                         newPose = EntityPose.STANDING;
@@ -256,25 +324,25 @@ public class Agent {
 
         this.standingEyeHeight = this.getEyeHeight(this.pose, this.dimensions);
 
-        if(this.dimensions.width < oldDimensions.width) {
-            double d = (double)this.dimensions.width / 2.0;
+        if(this.dimensions.width() < oldDimensions.width()) {
+            double d = (double)this.dimensions.width() / 2.0;
             this.box = new Box(this.posX - d, this.posY, this.posZ - d, this.posX + d,
-                this.posY + (double)this.dimensions.height, this.posZ + d);
+                this.posY + (double)this.dimensions.height(), this.posZ + d);
             return;
         }
 
-        this.box = new Box(this.box.minX, this.box.minY, this.box.minZ, this.box.minX + (double)this.dimensions.width,
-            this.box.minY + (double)this.dimensions.height, this.box.minZ + (double)this.dimensions.width);
+        this.box = new Box(this.box.minX, this.box.minY, this.box.minZ, this.box.minX + (double)this.dimensions.width(),
+            this.box.minY + (double)this.dimensions.height(), this.box.minZ + (double)this.dimensions.width());
 
-        if(this.dimensions.width > oldDimensions.width && !this.firstUpdate) {
-            float f = oldDimensions.width - this.dimensions.width;
+        if(this.dimensions.width() > oldDimensions.width() && !this.firstUpdate) {
+            float f = oldDimensions.width() - this.dimensions.width();
             this.move(world, MovementType.SELF, f, 0.0D, f);
         }
     }
 
     public final float getEyeHeight(EntityPose pose, EntityDimensions dimensions) {
          return switch(pose) {
-            case SWIMMING, FALL_FLYING, SPIN_ATTACK -> 0.4F;
+            case SWIMMING, GLIDING, SPIN_ATTACK -> 0.4F;
             case CROUCHING -> 1.27F;
             case SLEEPING -> 0.2F;
             default -> 1.62F;
@@ -282,57 +350,50 @@ public class Agent {
     }
 
     public void tickMovementClientPlayer(WorldView world) {
-        boolean prevSneaking = this.input.sneaking;
+        boolean prevSneaking = this.input.playerInput.sneak();
         boolean wasWalking = this.isWalking();
 
         this.inSneakingPose = !this.swimming && this.wouldPoseNotCollide(world, EntityPose.CROUCHING)
-            && (this.input.sneaking || !this.sleeping && !this.wouldPoseNotCollide(world, EntityPose.STANDING));
-        this.input.tick(this.inSneakingPose || (this.pose == EntityPose.SWIMMING && !this.touchingWater), 0.3F);
-
-        if(this.usingItem) {
-            this.input.movementSideways *= 0.2F;
-            this.input.movementForward *= 0.2F;
-        }
+            && (this.input.playerInput.sneak() || !this.sleeping && !this.wouldPoseNotCollide(world, EntityPose.STANDING));
+        this.input.tick();
 
         if(this.ticksToNextAutojump > 0) {
             --this.ticksToNextAutojump;
-            this.input.jumping = true;
+            this.input.playerInput = new PlayerInput(
+            		this.input.playerInput.forward(),
+            		this.input.playerInput.backward(),
+            		this.input.playerInput.left(),
+            		this.input.playerInput.right(),
+        			true,
+        			this.input.playerInput.sneak(),
+        			this.input.playerInput.sprint()
+        		);
         }
 
-        double width = this.dimensions.width;
+        double width = this.dimensions.width();
         this.pushOutOfBlocks(world, this.posX - width * 0.35D, this.posZ + width * 0.35D);
         this.pushOutOfBlocks(world, this.posX - width * 0.35D, this.posZ - width * 0.35D);
         this.pushOutOfBlocks(world, this.posX + width * 0.35D, this.posZ - width * 0.35D);
         this.pushOutOfBlocks(world, this.posX + width * 0.35D, this.posZ + width * 0.35D);
 
-        boolean canSprint = (float)this.hunger.getFoodLevel() > 6.0f;
 
-        if((this.onGround || this.isSubmergedInWater) && !prevSneaking && !wasWalking && this.isWalking()
-            && !this.sprinting && canSprint && !this.usingItem && this.blindness < 0) {
+        if(this.sprinting) {
+            if(this.swimming) {
+            	if (this.shouldStopSwimSprinting()) {
+					this.setSprinting(false);
+				}
+            } else if (this.shouldStopSprinting()) {
+				this.setSprinting(false);
+			}
+        }
+        
+        if(this.canStartSprinting()) {
             if(this.keySprint) {
                 this.setSprinting(true);
             }
         }
 
-        if(!this.sprinting && (!this.touchingWater || this.isSubmergedInWater) && this.isWalking() && canSprint
-            && !this.usingItem && this.blindness < 0 && this.keySprint) {
-            this.setSprinting(true);
-        }
-
-        if(this.sprinting) {
-            boolean slow = !this.input.hasForwardMovement() || !canSprint;
-            boolean slowed = this.horizontalCollision && !this.collidedSoftly || this.touchingWater && !this.isSubmergedInWater;
-
-            if(this.swimming) {
-                if(!this.onGround && !this.input.sneaking && slow || !this.touchingWater) {
-                    this.setSprinting(false);
-                }
-            } else if(slow || slowed) {
-                this.setSprinting(false);
-            }
-        }
-
-        if(this.touchingWater && this.input.sneaking) {
+        if(this.touchingWater && this.input.playerInput.sneak()) {
             this.velY -= 0.04F;
         }
 
@@ -353,14 +414,16 @@ public class Agent {
         if(this.jumpingCooldown > 0) {
             --this.jumpingCooldown;
         }
+        
+        Vec2f vec2f = this.applyMovementSpeedFactors(this.input.getMovementInput());
+		this.sidewaysSpeed = vec2f.x;
+		this.forwardSpeed = vec2f.y;
+        this.jumping = this.input.playerInput.jump();
 
-        if(Math.abs(this.velX) < 0.003) this.velX = 0.0;
+        
+        if(Math.abs(this.velX) < 1e-5) this.velX = 0.0;
         if(Math.abs(this.velY) < 0.003) this.velY = 0.0;
-        if(Math.abs(this.velZ) < 0.003) this.velZ = 0.0;
-
-        this.sidewaysSpeed = this.input.movementSideways;
-        this.forwardSpeed = this.input.movementForward;
-        this.jumping = this.input.jumping;
+        if(Math.abs(this.velZ) < 1e-5) this.velZ = 0.0;
 
         if(this.jumping) {
             double k = this.isInLava() ? this.getFluidHeight(FluidTags.LAVA) : this.getFluidHeight(FluidTags.WATER);
@@ -380,9 +443,8 @@ public class Agent {
         } else {
             this.jumpingCooldown = 0;
         }
+        
 
-        this.sidewaysSpeed *= 0.98F;
-        this.forwardSpeed *= 0.98F;
 
         this.travelPlayer(world);
 
@@ -404,9 +466,9 @@ public class Agent {
         this.velY = newY;
 
         if(this.sprinting) {
-            float g = this.yaw * ((float)Math.PI / 180);
-            this.velX += -MathHelper.sin(g) * 0.2F;
-            this.velZ +=  MathHelper.cos(g) * 0.2F;
+            float g = this.yaw * (float)(Math.PI / 180);
+            this.velX += (double)(-MathHelper.sin(g)) * 0.2;
+            this.velZ +=  (double)MathHelper.cos(g) * 0.2;
         }
     }
 
@@ -416,7 +478,7 @@ public class Agent {
 
     public float getJumpVelocityMultiplier(WorldView world) {
         BlockPos pos1 = new BlockPos(this.blockX, this.blockY, this.blockZ);
-        BlockPos pos2 = new BlockPos(this.blockX, this.box.minY - 0.5000001D, this.blockZ);
+        BlockPos pos2 = new BlockPos((int) this.blockX, (int) (this.box.minY - 0.500001D), (int) this.blockZ);
         float f = world.getBlockState(pos1).getBlock().getJumpVelocityMultiplier();
         float g = world.getBlockState(pos2).getBlock().getJumpVelocityMultiplier();
         return (double)f == 1.0D ? g : f;
@@ -438,8 +500,8 @@ public class Agent {
         }
 
         sideways *= speed; upward *= speed; forward *= speed;
-        float f = MathHelper.sin(this.yaw * 0.017453292F);
-        float g = MathHelper.cos(this.yaw * 0.017453292F);
+        float f = MathHelper.sin(yaw * (float) (Math.PI / 180.0));
+		float g = MathHelper.cos(yaw * (float) (Math.PI / 180.0));
 
         this.velX += sideways * (double)g - forward * (double)f;
         this.velY += upward;
@@ -570,7 +632,7 @@ public class Agent {
                 this.fallFlying = false;
             }
         } else {
-            BlockPos pos = new BlockPos(this.posX, this.box.minY - 0.5000001D, this.posZ);
+            BlockPos pos = new BlockPos((int) this.posX, (int) (this.box.minY - 0.5000001D), (int) this.posZ);
             float slipperiness = world.getBlockState(pos).getBlock().getSlipperiness();
             float xzDrag = this.onGround ? slipperiness * 0.91F : 0.91F;
             double ajuVelY = this.applyMovementInput(world, slipperiness);
@@ -604,9 +666,9 @@ public class Agent {
     private float getMovementSpeed(float slipperiness) {
         if(this.onGround) {
             return this.movementSpeed * (0.21600002F / (slipperiness * slipperiness * slipperiness));
-        }
+        }	
 
-        return this.airStrafingSpeed;
+        return this.sprinting ? 0.025999999F : 0.02F;
     }
 
     private void applyClimbingSpeed(WorldView world) {
@@ -618,7 +680,7 @@ public class Agent {
 
             BlockState state = world.getBlockState(new BlockPos(this.blockX, this.blockY, this.blockZ));
 
-            if(this.velY < 0.0D && !state.isOf(Blocks.SCAFFOLDING) && this.input.sneaking) {
+            if(this.velY < 0.0D && !state.isOf(Blocks.SCAFFOLDING) && this.input.playerInput.sneak()) {
                 this.velY = 0.0D;
             }
         }
@@ -705,8 +767,11 @@ public class Agent {
         Block block = landingState.getBlock();
 
         if(movY != ajuY) {
-            if(block instanceof SlimeBlock && !this.input.sneaking) {
-                if(this.velY < 0.0D) this.velY *= -1;
+            if(block instanceof SlimeBlock && !this.input.playerInput.sneak()) {
+                if(this.velY < 0.0D) {
+                	this.velY *= -1;
+                	this.slimeBounce = true;
+                }
             } else if(block instanceof BedBlock) {
                 if(this.velY < 0.0D) this.velY *= -1 * (double)0.66F;
             } else {
@@ -714,7 +779,7 @@ public class Agent {
             }
         }
 
-        if(this.onGround && !this.input.sneaking) {
+        if(this.onGround && !this.input.playerInput.sneak()) {
             if(block instanceof MagmaBlock) {
                 //damage the entity
             } else if(block instanceof SlimeBlock) {
@@ -723,6 +788,7 @@ public class Agent {
                 if(d < 0.1D) {
                     this.velX *= 0.4D + d * 0.2D;
                     this.velZ *= 0.4D + d * 0.2D;
+                	this.slimeBounce = true;
                 }
             } else if(block instanceof TurtleEggBlock) {
                 //eggs can break (1/100)
@@ -760,7 +826,7 @@ public class Agent {
     }
 
     public Vec3d adjustMovementForSneaking(WorldView world, MovementType type, Vec3d movement) {
-        if(this.input.sneaking && (type == MovementType.SELF || type == MovementType.PLAYER)
+        if(this.input.playerInput.sneak() && (type == MovementType.SELF || type == MovementType.PLAYER)
             && (this.onGround || this.fallDistance < this.stepHeight
             && !this.isSpaceEmpty(world, this.box.offset(0.0, this.fallDistance - this.stepHeight, 0.0)))) {
             double d = movement.x;
@@ -798,24 +864,74 @@ public class Agent {
         boolean bl = movement.x != vec3d.x;
         boolean bl2 = movement.y != vec3d.y;
         boolean bl3 = movement.z != vec3d.z;
-        boolean bl5 = this.onGround || bl2 && movement.y < 0.0;
+		boolean bl4 = bl2 && movement.y < 0.0;
+        boolean bl5 = this.onGround || bl4;
 
         if(this.stepHeight > 0.0f && bl5 && (bl || bl3)) {
-            Vec3d vec3d2 = this.adjustMovementForCollisions(new Vec3d(movement.x, this.stepHeight, movement.z), box, world, list);
-            Vec3d vec3d3 = this.adjustMovementForCollisions(new Vec3d(0.0, this.stepHeight, 0.0), box.stretch(movement.x, 0.0, movement.z), world, list);
-            Vec3d vec3d4 = this.adjustMovementForCollisions(new Vec3d(movement.x, 0.0, movement.z), box.offset(vec3d3), world, list).add(vec3d3);
+//            Vec3d vec3d2 = this.adjustMovementForCollisions(new Vec3d(movement.x, this.stepHeight, movement.z), box, world, list);
+//            Vec3d vec3d3 = this.adjustMovementForCollisions(new Vec3d(0.0, this.stepHeight, 0.0), box.stretch(movement.x, 0.0, movement.z), world, list);
+//            Vec3d vec3d4 = this.adjustMovementForCollisions(new Vec3d(movement.x, 0.0, movement.z), box.offset(vec3d3), world, list).add(vec3d3);
+//
+//            if(vec3d3.y < (double)this.stepHeight && vec3d4.horizontalLengthSquared() > vec3d2.horizontalLengthSquared()) {
+//                vec3d2 = vec3d4;
+//            }
+//
+//            if(vec3d2.horizontalLengthSquared() > vec3d.horizontalLengthSquared()) {
+//                return vec3d2.add(this.adjustMovementForCollisions(new Vec3d(0.0, -vec3d2.y + movement.y, 0.0), box.offset(vec3d2), world, list));
+//            }
+        	Box box2 = bl4 ? box.offset(0.0, vec3d.y, 0.0) : box;
+			Box box3 = box2.stretch(movement.x, (double)this.stepHeight, movement.z);
+			if (!bl4) {
+				box3 = box3.stretch(0.0, -1.0E-5F, 0.0);
+			}
 
-            if(vec3d3.y < (double)this.stepHeight && vec3d4.horizontalLengthSquared() > vec3d2.horizontalLengthSquared()) {
-                vec3d2 = vec3d4;
-            }
+			List<VoxelShape> list2 = this.findCollisionsForMovement(world, list, box3);
+			float f = (float)vec3d.y;
+			float[] fs = collectStepHeights(box2, list2, this.stepHeight, f);
 
-            if(vec3d2.horizontalLengthSquared() > vec3d.horizontalLengthSquared()) {
-                return vec3d2.add(this.adjustMovementForCollisions(new Vec3d(0.0, -vec3d2.y + movement.y, 0.0), box.offset(vec3d2), world, list));
-            }
+			for (float g : fs) {
+				Vec3d vec3d2 = adjustMovementForCollisions(new Vec3d(movement.x, (double)g, movement.z), box2, list2);
+				if (vec3d2.horizontalLengthSquared() > vec3d.horizontalLengthSquared()) {
+					double d = box.minY - box2.minY;
+					return vec3d2.add(0.0, -d, 0.0);
+				}
+			}
         }
 
         return vec3d;
     }
+    
+    private List<VoxelShape> findCollisionsForMovement(WorldView world, List<VoxelShape> regularCollisions, Box movingEntityBoundingBox
+    	) {
+    		Builder<VoxelShape> builder = ImmutableList.builderWithExpectedSize(regularCollisions.size() + 1);
+    		if (!regularCollisions.isEmpty()) {
+    			builder.addAll(regularCollisions);
+    		}
+
+    		builder.addAll(this.getBlockCollisions(world, movingEntityBoundingBox));
+    		return builder.build();
+    	}
+    
+    private static float[] collectStepHeights(Box collisionBox, List<VoxelShape> collisions, float f, float stepHeight) {
+		FloatSet floatSet = new FloatArraySet(4);
+
+		for (VoxelShape voxelShape : collisions) {
+			for (double d : voxelShape.getPointPositions(Axis.Y)) {
+				float g = (float)(d - collisionBox.minY);
+				if (!(g < 0.0F) && g != stepHeight) {
+					if (g > f) {
+						break;
+					}
+
+					floatSet.add(g);
+				}
+			}
+		}
+
+		float[] fs = floatSet.toFloatArray();
+		FloatArrays.unstableSort(fs);
+		return fs;
+	}
 
     public Vec3d adjustMovementForCollisions(Vec3d movement, Box entityBoundingBox, WorldView world, List<VoxelShape> entityCollisions) {
         ImmutableList.Builder<VoxelShape> builder = ImmutableList.builderWithExpectedSize(entityCollisions.size() + 1);
@@ -966,7 +1082,7 @@ public class Agent {
                 } else if(landedState.getBlock() instanceof HayBlock) {
                     this.handleFallDamage(this.fallDistance, 0.2F);
                 } else if(landedState.getBlock() instanceof SlimeBlock) {
-                    this.handleFallDamage(this.fallDistance, this.input.sneaking ? 1.0F : 0.0F);
+                    this.handleFallDamage(this.fallDistance, this.input.playerInput.sneak() ? 1.0F : 0.0F);
                 } else if(landedState.getBlock() instanceof TurtleEggBlock) {
                     //eggs can break (1/3)
                     this.handleFallDamage(this.fallDistance, 1.0F);
@@ -979,13 +1095,18 @@ public class Agent {
         } else if(heightDifference < 0.0D) {
             this.fallDistance -= (float)heightDifference;
         }
+
+        if(this.touchingWater) {
+            this.fallDistance = 0F;
+        }
     }
 
-    public boolean handleFallDamage(float fallDistance, float damageMultiplier) {
+    public boolean handleFallDamage(double fallDistance, float damageMultiplier) {
         int i = this.computeFallDamage(fallDistance, damageMultiplier);
 
         if(i > 0) {
             //this.damage(DamageSource.FALL, i);
+        	this.isDamaged = true; 
         	this.velX = 0;
         	this.velZ = 0;
             return true;
@@ -994,14 +1115,20 @@ public class Agent {
         return false;
     }
 
-    public int computeFallDamage(float fallDistance, float damageMultiplier) {
+    public int computeFallDamage(double fallDistance, float damageMultiplier) {
+    	if (TungstenModDataContainer.player == null) return 0;
+    	if (TungstenModDataContainer.player.getType().isIn(EntityTypeTags.FALL_DAMAGE_IMMUNE)) {
+    		return 0;
+    	}
         float f = this.jumpBoost < 0 ? 0.0F : (float)(this.jumpBoost + 1);
         return MathHelper.ceil((fallDistance - 3.0f - f) * damageMultiplier);
     }
 
     public void checkBlockCollision(WorldView world) {
-        BlockPos blockPos = new BlockPos(this.box.minX + 0.001, this.box.minY + 0.001, this.box.minZ + 0.001);
-        BlockPos blockPos2 = new BlockPos(this.box.maxX - 0.001, this.box.maxY - 0.001, this.box.maxZ - 0.001);
+    	double minOffset = 0.001; // default 0.001
+    	double maxOffset = 0.001; // default 0.001
+        BlockPos blockPos = new BlockPos((int) (this.box.minX + minOffset), (int) (this.box.minY + minOffset), (int) (this.box.minZ + minOffset));
+        BlockPos blockPos2 = new BlockPos((int) (this.box.maxX - maxOffset), (int) (this.box.maxY - maxOffset), (int) (this.box.maxZ - maxOffset));
         BlockPos.Mutable pos = new BlockPos.Mutable();
 
         if(world.isRegionLoaded(blockPos, blockPos2)) {
@@ -1072,25 +1199,35 @@ public class Agent {
 
         double d = Math.abs((double)pos.getX() + 0.5D - this.posX);
         double e = Math.abs((double)pos.getZ() + 0.5D - this.posZ);
-        double f = 0.4375D + (double)(this.dimensions.width / 2.0F);
+        double f = 0.4375D + (double)(this.dimensions.width() / 2.0F);
         return d + 1.0E-7D > f || e + 1.0E-7D > f;
     }
 
     public float getVelocityMultiplier(WorldView world) {
-        if(this.fallFlying) return 1.0F;
-
-        Block block = world.getBlockState(new BlockPos(this.blockX, this.blockY, this.blockZ)).getBlock();
-        float blockMult = block.getVelocityMultiplier();
-
-        if(block == Blocks.WATER || block == Blocks.BUBBLE_COLUMN) return blockMult;
-
-        BlockPos pos = new BlockPos(this.blockX, MathHelper.floor(this.posY - 0.5000001D), this.blockZ);
-        return (double)blockMult == 1.0D ? world.getBlockState(pos).getBlock().getVelocityMultiplier() : blockMult;
+    	BlockState blockState = world.getBlockState(new BlockPos(this.blockX, this.blockY, this.blockZ));
+		float f = blockState.getBlock().getVelocityMultiplier();
+		if (!blockState.isOf(Blocks.WATER) && !blockState.isOf(Blocks.BUBBLE_COLUMN)) {
+			return (double)f == 1.0 ? world.getBlockState(this.getLandingPos(world)).getBlock().getVelocityMultiplier() : f;
+		} else {
+			return f;
+		}
     }
+    
+    protected static Vec3d movementInputToVelocity(Vec3d movementInput, float speed, float yaw) {
+		double d = movementInput.lengthSquared();
+		if (d < 1.0E-7) {
+			return Vec3d.ZERO;
+		} else {
+			Vec3d vec3d = (d > 1.0 ? movementInput.normalize() : movementInput).multiply(speed);
+			float f = MathHelper.sin(yaw * (float) (Math.PI / 180.0));
+			float g = MathHelper.cos(yaw * (float) (Math.PI / 180.0));
+			return new Vec3d(vec3d.x * g - vec3d.z * f, vec3d.y, vec3d.z * g + vec3d.x * f);
+		}
+	}
 
     public BlockPos getLandingPos(WorldView world) {
         BlockPos pos = new BlockPos(this.blockX, MathHelper.floor(this.posY - (double)0.2F), this.blockZ);
-
+        
         if(!world.getBlockState(pos).isAir()) {
             return pos;
         }
@@ -1103,16 +1240,91 @@ public class Agent {
 
         return pos;
     }
+    
+    public boolean canSprint() {
+		return this.hunger.getFoodLevel() > 6.0F;
+	}
+    
+    public boolean shouldSlowDown() {
+		return this.sneaking || this.keySneak;
+	}
+    
+
+	private Vec2f applyMovementSpeedFactors(Vec2f input) {
+		if (input.lengthSquared() == 0.0F) {
+			return input;
+		} else {
+			Vec2f vec2f = input.multiply(0.98F);
+			if (this.usingItem) {
+				vec2f = vec2f.multiply(0.2F);
+			}
+
+			if (this.shouldSlowDown()) {
+				float f = 0.3F;
+				vec2f = vec2f.multiply(f);
+			}
+			
+			vec2f = applyDirectionalMovementSpeedFactors(vec2f);
+			
+
+			return vec2f;
+		}
+	}
+
+	private static Vec2f applyDirectionalMovementSpeedFactors(Vec2f vec) {
+		float f = vec.length();
+		if (f <= 0.0F) {
+			return vec;
+		} else {
+			Vec2f vec2f = vec.multiply(1.0F / f);
+			float g = getDirectionalMovementSpeedMultiplier(vec2f);
+			float h = Math.min(f * g, 1.0F);
+			return vec2f.multiply(h);
+		}
+	}
+
+	private static float getDirectionalMovementSpeedMultiplier(Vec2f vec) {
+		float f = Math.abs(vec.x);
+		float g = Math.abs(vec.y);
+		float h = g > f ? f / g : g / f;
+		return MathHelper.sqrt(1.0F + MathHelper.square(h));
+	}
+    
+    private boolean canStartSprinting() {
+		return Math.abs(this.forwardSpeed) > -0.1
+			&& this.canSprint()
+			&& this.keyForward
+			&& !this.horizontalCollision
+			&& !this.usingItem
+			&& this.blindness < 0
+			&& (!this.shouldSlowDown() || this.isSubmergedInWater)
+			&& (!this.touchingWater || this.isSubmergedInWater);
+	}
+
+	private boolean shouldStopSprinting() {
+		
+		return this.forwardSpeed == 0
+			|| !this.keyForward
+			|| !this.canSprint()
+			|| this.horizontalCollision && !this.collidedSoftly
+			|| this.touchingWater && !this.isSubmergedInWater;
+	}
+
+	private boolean shouldStopSwimSprinting() {
+		return !this.touchingWater
+			|| !this.input.hasForwardMovement() && !this.onGround && !this.input.playerInput.sneak()
+			|| !this.canSprint();
+	}
 
     private boolean isWalking() {
-        return this.isSubmergedInWater ? this.input.hasForwardMovement() : (double)this.input.movementForward >= 0.8D;
+        return this.input.hasForwardMovement();
     }
 
     public Box calculateBoundsForPose(EntityPose pose) {
         EntityDimensions size = POSE_DIMENSIONS.getOrDefault(pose, STANDING_DIMENSIONS);
-        float f = size.width / 2.0F;
+        float f = size.width() / 2.0F;
         Vec3d min = new Vec3d(this.posX - (double)f, this.posY, this.posZ - (double)f);
-        Vec3d max = new Vec3d(this.posX + (double)f, this.posY + (double)size.height, this.posZ + (double)f);
+        Vec3d max = new Vec3d(this.posX + (double)f, this.posY + (double)size.height(), this.posZ + (double)f);
         return new Box(min, max);
     }
 
@@ -1122,7 +1334,7 @@ public class Agent {
 
     private void pushOutOfBlocks(WorldView world, double x, double d) {
         Direction[] directions = new Direction[] { Direction.WEST, Direction.EAST, Direction.NORTH, Direction.SOUTH };
-        BlockPos blockPos = new BlockPos(x, this.posY, d);
+        BlockPos blockPos = new BlockPos((int) x, (int) this.posY, (int) d);
         if (!this.wouldCollideAt(world, blockPos)) {
             return;
         }
@@ -1151,27 +1363,35 @@ public class Agent {
 
     public boolean canCollide(WorldView world, Box box) {
         AgentBlockCollisions collisions = new AgentBlockCollisions(world, this, box, true);
+        
+        while (collisions.hasNext()) {
+			if (!collisions.next().isEmpty()) {
+				return true;
+			}
+		}
 
-        if(!collisions.hasNext()) {
-            this.scannedBlocks += collisions.scannedBlocks;
-            return false;
-        }
+		return false;
 
-        while(collisions.next().isEmpty()) {
-            if(!collisions.hasNext()) {
-                this.scannedBlocks += collisions.scannedBlocks;
-                return false;
-            }
-        }
-
-        this.scannedBlocks += collisions.scannedBlocks;
-        return true;
+//        if(!collisions.hasNext()) {
+//            this.scannedBlocks += collisions.scannedBlocks;
+//            return false;
+//        }
+//
+//        while(collisions.next().isEmpty()) {
+//            if(!collisions.hasNext()) {
+//                this.scannedBlocks += collisions.scannedBlocks;
+//                return false;
+//            }
+//        }
+//
+//        this.scannedBlocks += collisions.scannedBlocks;
+//        return true;
     }
 
     private boolean wouldCollideAt(WorldView world, BlockPos pos) {
-        Box box2 = new Box(pos.getX(), this.box.minY, pos.getZ(),
-            (double)pos.getX() + 1.0D, this.box.maxY, (double)pos.getZ() + 1.0D).contract(1.0E-7);
-        return this.canCollide(world, box2);
+    	Box box = this.box;
+//		Box box2 = new Box((double)pos.getX(), box.minY, (double)pos.getZ(), (double)pos.getX() + 1.0, box.maxY, (double)pos.getZ() + 1.0).contract(1.0E-7);
+        return this.canCollide(world, box);
     }
 
     public void setSprinting(boolean sprinting) {
@@ -1268,19 +1488,31 @@ public class Agent {
     }
     */
 
-    public void compare(ClientPlayerEntity player, boolean executor) {
+    public void compare(PlayerEntity player, PlayerInput playerInput, boolean executor) {
         List<String> values = new ArrayList<>();
-
+        
         if(this.posX != player.getX() || this.posY != player.getY() || this.posZ != player.getZ()) {
             values.add(String.format("Position mismatch (%s, %s, %s) vs (%s, %s, %s)",
-                player.getPos().x == this.posX ? "x" : player.getPos().x,
-                player.getPos().y == this.posY ? "y" : player.getPos().y,
-                player.getPos().z == this.posZ ? "z" : player.getPos().z,
-                player.getPos().x == this.posX ? "x" : this.posX,
-                player.getPos().y == this.posY ? "y" : this.posY,
-                player.getPos().z == this.posZ ? "z" : this.posZ));
-        }
+                player.getEntityPos().x == this.posX ? "x" : player.getEntityPos().x,
+                player.getEntityPos().y == this.posY ? "y" : player.getEntityPos().y,
+                player.getEntityPos().z == this.posZ ? "z" : player.getEntityPos().z,
+                player.getEntityPos().x == this.posX ? "x" : this.posX,
+                player.getEntityPos().y == this.posY ? "y" : this.posY,
+                player.getEntityPos().z == this.posZ ? "z" : this.posZ));
+            // I know this is probably a really stupid way to fix a mismatch but server doesnt seem to care so I'm doing it anyway!
+            if (TungstenModDataContainer.EXECUTOR.isRunning()) {
+            	player.setPosition(this.posX, this.posY, this.posZ);
+//            	TungstenModDataContainer.EXECUTOR.stop = true;
+//            	TungstenModDataContainer.PATHFINDER.stop.set(true);
+            	
 
+            	if (TungstenModRenderContainer.ERROR.size() > 1000) TungstenModRenderContainer.ERROR.clear();
+//            	Node node = TungstenModDataContainer.EXECUTOR.getCurrentNode();
+//            	if (node != null) RenderHelper.renderNode(node, TungstenModRenderContainer.ERROR);
+//            	TungstenModRenderContainer.ERROR.add(new Cuboid(player.getPos(), new Vec3d(0.1, 0.5, 0.1), Color.RED));
+            }
+        }
+        
         if(this.velX != player.getVelocity().x || this.velY != player.getVelocity().y || this.velZ != player.getVelocity().z) {
             values.add(String.format("Velocity mismatch (%s, %s, %s) vs (%s, %s, %s)",
                 player.getVelocity().x,
@@ -1289,6 +1521,38 @@ public class Agent {
                 player.getVelocity().x == this.velX ? "x" : this.velX,
                 player.getVelocity().y == this.velY ? "y" : this.velY,
                 player.getVelocity().z == this.velZ ? "z" : this.velZ));
+            // I know this is probably a really stupid way to fix a mismatch but server doesnt seem to care so I'm doing it anyway!
+            if (TungstenModDataContainer.EXECUTOR.isRunning()) {
+            	
+            	values.add(String.format("Velocity mismatch by (%s, %s, %s)",
+                        player.getVelocity().x - this.velX,
+                        player.getVelocity().y - this.velY,
+                        player.getVelocity().z - this.velZ));
+//            	System.out.println((float)player.getAttributeValue(EntityAttributes.SNEAKING_SPEED));
+            	player.setVelocity(this.velX, this.velY, this.velZ);
+            	Node node = TungstenModDataContainer.EXECUTOR.getCurrentNode();
+            	if (TungstenModRenderContainer.ERROR.size() > 1000) TungstenModRenderContainer.ERROR.clear();
+                if (node != null && node.agent.getPos().distanceTo(player.getEntityPos()) > 0.78) {
+//                    TungstenModDataContainer.EXECUTOR.stop = true;
+////                    TungstenModDataContainer.PATHFINDER.stop.set(true);
+////                    player.setVelocity(0, 0, 0);
+//                    if (TungstenModDataContainer.EXECUTOR.blockPath != null) {
+//                        if (TungstenModDataContainer.PATHFINDER.active.get()) {
+//                            TungstenModDataContainer.PATHFINDER.stop.set(true);
+//                            while (TungstenModDataContainer.PATHFINDER.active.get()) {
+//                                try {
+//                                    Thread.sleep(250);
+//                                } catch (InterruptedException e) {
+//                                    throw new RuntimeException(e);
+//                                }
+//                            }
+//                        }
+//                        TungstenModDataContainer.PATHFINDER.find(TungstenModDataContainer.world, TungstenMod.TARGET, player, Optional.of(TungstenModDataContainer.EXECUTOR.blockPath));
+//                    }
+                    RenderHelper.renderNode(node, TungstenModRenderContainer.ERROR);
+                    TungstenModRenderContainer.ERROR.add(new Cuboid(player.getEntityPos(), new Vec3d(0.1, 0.5, 0.1), Color.RED));
+                }
+            }
         }
 
         if(this.mulX != ((AccessorEntity)player).getMovementMultiplier().x
@@ -1314,6 +1578,97 @@ public class Agent {
         }
 
         if(this.movementSpeed != player.getMovementSpeed()) {
+
+        	if (TungstenModDataContainer.LOG_DEBUG_DATA) {
+        		Node node = TungstenModDataContainer.EXECUTOR.getCurrentNode();
+            	if (node != null) {
+    	        	StringBuilder string = new StringBuilder();
+    	
+    	    		string.append("{\n");
+    	    		if (node.input.forward != playerInput.forward()) {
+    	        		string.append("forward: ");
+    	        		string.append(playerInput.forward());
+    	        		string.append(" vs ");
+    	        		string.append(node.input.forward);
+    	        		string.append("\n");
+    	    		}
+    	    		if (node.input.back != playerInput.backward()) {
+    	        		string.append("back: ");
+    	        		string.append(playerInput.backward());
+    	        		string.append(" vs ");
+    	        		string.append(node.input.back);
+    	        		string.append("\n");
+    	    		}
+    	    		if (node.input.right != playerInput.right()) {
+    	        		string.append("right: ");
+    	        		string.append(playerInput.right());
+    	        		string.append(" vs ");
+    	        		string.append(node.input.right);
+    	        		string.append("\n");
+    	    		}
+    	    		if (node.input.left != playerInput.left()) {
+    	        		string.append("left: ");
+    	        		string.append(playerInput.left());
+    	        		string.append(" vs ");
+    	        		string.append(node.input.left);
+    	        		string.append("\n");
+    	    		}
+    	    		if (node.input.jump != playerInput.jump()) {
+    	        		string.append("jump: ");
+    	        		string.append(playerInput.jump());
+    	        		string.append(" vs ");
+    	        		string.append(node.input.jump);
+    	        		string.append("\n");
+    	    		}
+    	    		if (node.input.sneak != playerInput.sneak()) {
+    	        		string.append("sneak: ");
+    	        		string.append(playerInput.sneak());
+    	        		string.append(" vs ");
+    	        		string.append(node.input.sneak);
+    	        		string.append("\n");
+    	    		}
+    	    		if (node.input.sprint != playerInput.sprint()) {
+    	        		string.append("sprint: ");
+    	        		string.append(playerInput.sprint());
+    	        		string.append(" vs ");
+    	        		string.append(node.input.sprint);
+    	        		string.append("\n");
+    	    		}
+    	    		if (node.input.pitch != player.getPitch()) {
+    	        		string.append("pitch: ");
+    	        		string.append(player.getPitch());
+    	        		string.append(" vs ");
+    	        		string.append(node.input.pitch);
+    	        		string.append("\n");
+    	    		}
+    	    		if (node.input.yaw != player.getYaw()) {
+    	        		string.append("yaw: ");
+    	        		string.append(player.getYaw());
+    	        		string.append(" vs ");
+    	        		string.append(node.input.yaw);
+    	        		string.append("\n");
+    	    		}
+    	    		if (node.agent.onGround != player.isOnGround()) {
+    	        		string.append("isOnGround: ");
+    	        		string.append(player.isOnGround());
+    	        		string.append(" vs ");
+    	        		string.append(node.agent.onGround);
+    	        		string.append("\n");
+    	    		}
+    	    		string.append("\n");
+    	    		string.append("}");
+    	
+    	        	if (string.toString().length() > 4) {
+    		        	Debug.logMessage("------------");
+    		        	Debug.logMessage(string.toString());
+    		        	Debug.logMessage("Current Movement Speed: " + player.getMovementSpeed() + " \nExpected to be: " + this.movementSpeed + "");
+    		        	Debug.logMessage("------------");
+    	        	} else {
+    		        	Debug.logMessage("Current Movement Speed: " + player.getMovementSpeed() + " \nExpected to be: " + this.movementSpeed + "");
+    	        	}
+            	}	
+        	}
+        	
             values.add(String.format("Movement Speed mismatch %f vs %f", player.getMovementSpeed(), this.movementSpeed));
         }
 
@@ -1333,8 +1688,8 @@ public class Agent {
             values.add(String.format("Submerged in water mismatch %s vs %s", player.isSubmergedInWater(), this.isSubmergedInWater));
         }
 
-	    if(this.input.sneaking != player.input.sneaking) {
-		    values.add(String.format("Sneaking mismatch %s vs %s", player.input.sneaking, this.input.sneaking));
+	    if(this.input.playerInput.sneak() != playerInput.sneak()) {
+		    values.add(String.format("Sneaking mismatch %s vs %s", playerInput.sneak(), this.input.playerInput.sneak()));
 	    }
 
         if(this.swimming != player.isSwimming()) {
@@ -1369,9 +1724,15 @@ public class Agent {
             values.add(String.format("Jumping Cooldown mismatch %s vs %s", ((AccessorLivingEntity)player).getJumpingCooldown(), this.jumpingCooldown));
         }
 
-        if(this.airStrafingSpeed != player.airStrafingSpeed) {
-            values.add(String.format("Air Strafe Speed mismatch %s vs %s", player.airStrafingSpeed, this.airStrafingSpeed));
-        }
+//        if(this.airStrafingSpeed != player.airStrafingSpeed) {
+//            values.add(String.format("Air Strafe Speed mismatch %s vs %s", player.airStrafingSpeed, this.airStrafingSpeed));
+//        }
+        
+//        if(!this.box.equals(player.getBoundingBox())) {
+//            values.add(String.format("Bounding box mismatch %s vs %s", player.getBoundingBox(), this.box));
+//            this.box = player.getBoundingBox();
+//        }
+
 
         if(this.firstUpdate != ((AccessorEntity)player).getFirstUpdate()) {
             values.add(String.format("First Update mismatch %s vs %s", ((AccessorEntity)player).getFirstUpdate(), this.firstUpdate));
@@ -1387,26 +1748,19 @@ public class Agent {
         }
     }
 
-    public static Agent of(ClientPlayerEntity player) {
-        Agent agent = new Agent();
-        agent.keyForward = MinecraftClient.getInstance().options.forwardKey.isPressed();
-        agent.keyBack = MinecraftClient.getInstance().options.backKey.isPressed();
-        agent.keyLeft = MinecraftClient.getInstance().options.leftKey.isPressed();
-        agent.keyRight = MinecraftClient.getInstance().options.rightKey.isPressed();
-        agent.keyJump = MinecraftClient.getInstance().options.jumpKey.isPressed();
-        agent.keySneak = MinecraftClient.getInstance().options.sneakKey.isPressed();
-        agent.keySprint = MinecraftClient.getInstance().options.sprintKey.isPressed();
 
-        agent.input.movementSideways = player.input.movementSideways;
-        agent.input.movementForward = player.input.movementForward;
-        agent.input.pressingForward = player.input.pressingForward;
-        agent.input.pressingBack = player.input.pressingBack;
-        agent.input.pressingLeft = player.input.pressingLeft;
-        agent.input.pressingRight = player.input.pressingRight;
-        agent.input.jumping = player.input.jumping;
-        agent.input.sneaking = player.input.sneaking;
+    public static Agent of(PlayerEntity player) {
+        Agent agent = new Agent();
+        agent.keyForward = PlayerInput.DEFAULT.forward();
+        agent.keyBack = PlayerInput.DEFAULT.backward();
+        agent.keyLeft = PlayerInput.DEFAULT.left();
+        agent.keyRight = PlayerInput.DEFAULT.right();
+        agent.keyJump = PlayerInput.DEFAULT.jump();
+        agent.keySneak = PlayerInput.DEFAULT.sneak();
+        agent.keySprint = PlayerInput.DEFAULT.sprint();
 
         agent.pose = player.getPose();
+        agent.sprinting = player.isSprinting();
         agent.inSneakingPose = player.isInSneakingPose();
         agent.usingItem = player.isUsingItem();
         agent.sidewaysSpeed = player.sidewaysSpeed;
@@ -1436,10 +1790,11 @@ public class Agent {
         agent.onGround = player.isOnGround();
         agent.sleeping = player.isSleeping();
         agent.sneaking = player.isSneaky();
+        agent.hunger = player.getHungerManager();
         agent.sprinting = player.isSprinting();
         agent.swimming = player.isSwimming();
-        agent.fallFlying = player.isFallFlying();
-        agent.stepHeight = player.stepHeight;
+        agent.fallFlying = player.getAbilities().flying;
+        agent.stepHeight = player.getStepHeight();
         agent.fallDistance = player.fallDistance;
         agent.touchingWater = player.isTouchingWater();
         agent.isSubmergedInWater = player.isSubmergedInWater();
@@ -1454,9 +1809,148 @@ public class Agent {
         agent.dolphinsGrace = player.hasStatusEffect(StatusEffects.DOLPHINS_GRACE) ? player.getStatusEffect(StatusEffects.DOLPHINS_GRACE).getAmplifier() : -1;
         agent.levitation = player.hasStatusEffect(StatusEffects.LEVITATION) ? player.getStatusEffect(StatusEffects.LEVITATION).getAmplifier() : -1;
         agent.movementSpeed = player.getMovementSpeed();
-        agent.airStrafingSpeed = player.airStrafingSpeed;
+        agent.airStrafingSpeed = 0.06f;
         agent.jumpingCooldown = ((AccessorLivingEntity)player).getJumpingCooldown();
+        agent.hunger.setFoodLevel(player.getHungerManager().getFoodLevel());
+        agent.hunger.setSaturationLevel(player.getHungerManager().getSaturationLevel());
+        //TODO: frame.ticksToNextAutojump
+        return agent;
+    }
 
+
+    public static Agent of(PlayerEntity player, PlayerInput playerInput) {
+        Agent agent = new Agent();
+        agent.keyForward = playerInput.forward();
+        agent.keyBack = playerInput.backward();
+        agent.keyLeft = playerInput.left();
+        agent.keyRight = playerInput.right();
+        agent.keyJump = playerInput.jump();
+        agent.keySneak = playerInput.sneak();
+        agent.keySprint = playerInput.sprint();
+
+        agent.pose = player.getPose();
+        agent.sprinting = player.isSprinting();
+        agent.inSneakingPose = player.isInSneakingPose();
+        agent.usingItem = player.isUsingItem();
+        agent.sidewaysSpeed = player.sidewaysSpeed;
+        agent.upwardSpeed = player.upwardSpeed;
+        agent.forwardSpeed = player.forwardSpeed;
+        agent.yaw = player.getYaw();
+        agent.pitch = player.getPitch();
+        agent.posX = player.getX();
+        agent.posY = player.getY();
+        agent.posZ = player.getZ();
+        agent.blockX = player.getBlockPos().getX();
+        agent.blockY = player.getBlockPos().getY();
+        agent.blockZ = player.getBlockPos().getZ();
+        agent.velX = player.getVelocity().x;
+        agent.velY = player.getVelocity().y;
+        agent.velZ = player.getVelocity().z;
+        agent.mulX = ((AccessorEntity)player).getMovementMultiplier().x;
+        agent.mulY = ((AccessorEntity)player).getMovementMultiplier().y;
+        agent.mulZ = ((AccessorEntity)player).getMovementMultiplier().z;
+        agent.fluidHeight.put(FluidTags.WATER, player.getFluidHeight(FluidTags.WATER));
+        agent.fluidHeight.put(FluidTags.LAVA, player.getFluidHeight(FluidTags.LAVA));
+        agent.submergedFluids.addAll(((AccessorEntity)player).getSubmergedFluidTag());
+        agent.firstUpdate = ((AccessorEntity)player).getFirstUpdate();
+        agent.box = player.getBoundingBox();
+        agent.dimensions = player.getDimensions(player.getPose());
+        agent.standingEyeHeight = player.getStandingEyeHeight();
+        agent.onGround = player.isOnGround();
+        agent.sleeping = player.isSleeping();
+        agent.sneaking = player.isSneaky();
+        agent.hunger = player.getHungerManager();
+        agent.sprinting = player.isSprinting();
+        agent.swimming = player.isSwimming();
+        agent.fallFlying = player.getAbilities().flying;
+        agent.stepHeight = player.getStepHeight();
+        agent.fallDistance = player.fallDistance;
+        agent.touchingWater = player.isTouchingWater();
+        agent.isSubmergedInWater = player.isSubmergedInWater();
+        agent.horizontalCollision = player.horizontalCollision;
+        agent.verticalCollision = player.verticalCollision;
+        agent.collidedSoftly = player.collidedSoftly;
+        agent.jumping = ((AccessorLivingEntity)player).getJumping();
+        agent.speed = player.hasStatusEffect(StatusEffects.SPEED) ? player.getStatusEffect(StatusEffects.SPEED).getAmplifier() : -1;
+        agent.blindness = player.hasStatusEffect(StatusEffects.BLINDNESS) ? player.getStatusEffect(StatusEffects.BLINDNESS).getAmplifier() : -1;
+        agent.jumpBoost = player.hasStatusEffect(StatusEffects.JUMP_BOOST) ? player.getStatusEffect(StatusEffects.JUMP_BOOST).getAmplifier() : -1;
+        agent.slowFalling = player.hasStatusEffect(StatusEffects.SLOW_FALLING) ? player.getStatusEffect(StatusEffects.SLOW_FALLING).getAmplifier() : -1;
+        agent.dolphinsGrace = player.hasStatusEffect(StatusEffects.DOLPHINS_GRACE) ? player.getStatusEffect(StatusEffects.DOLPHINS_GRACE).getAmplifier() : -1;
+        agent.levitation = player.hasStatusEffect(StatusEffects.LEVITATION) ? player.getStatusEffect(StatusEffects.LEVITATION).getAmplifier() : -1;
+        agent.movementSpeed = player.getMovementSpeed();
+        agent.airStrafingSpeed = 0.06f;
+        agent.jumpingCooldown = ((AccessorLivingEntity)player).getJumpingCooldown();
+        agent.hunger.setFoodLevel(player.getHungerManager().getFoodLevel());
+        agent.hunger.setSaturationLevel(player.getHungerManager().getSaturationLevel());
+        //TODO: frame.ticksToNextAutojump
+        return agent;
+    }
+
+    
+    public static Agent of(ClientPlayerEntity player, GameOptions options) {
+        Agent agent = new Agent();
+        agent.keyForward = options.forwardKey.isPressed();
+        agent.keyBack = options.backKey.isPressed();
+        agent.keyLeft = options.leftKey.isPressed();
+        agent.keyRight = options.rightKey.isPressed();
+        agent.keyJump = options.jumpKey.isPressed();
+        agent.keySneak = options.sneakKey.isPressed();
+        agent.keySprint = options.sprintKey.isPressed();
+
+        agent.pose = player.getPose();
+        agent.sprinting = player.isSprinting();
+        agent.inSneakingPose = player.isInSneakingPose();
+        agent.usingItem = player.isUsingItem();
+        agent.sidewaysSpeed = player.sidewaysSpeed;
+        agent.upwardSpeed = player.upwardSpeed;
+        agent.forwardSpeed = player.forwardSpeed;
+        agent.yaw = player.getYaw();
+        agent.pitch = player.getPitch();
+        agent.posX = player.getX();
+        agent.posY = player.getY();
+        agent.posZ = player.getZ();
+        agent.blockX = player.getBlockPos().getX();
+        agent.blockY = player.getBlockPos().getY();
+        agent.blockZ = player.getBlockPos().getZ();
+        agent.velX = player.getVelocity().x;
+        agent.velY = player.getVelocity().y;
+        agent.velZ = player.getVelocity().z;
+        agent.mulX = ((AccessorEntity)player).getMovementMultiplier().x;
+        agent.mulY = ((AccessorEntity)player).getMovementMultiplier().y;
+        agent.mulZ = ((AccessorEntity)player).getMovementMultiplier().z;
+        agent.fluidHeight.put(FluidTags.WATER, player.getFluidHeight(FluidTags.WATER));
+        agent.fluidHeight.put(FluidTags.LAVA, player.getFluidHeight(FluidTags.LAVA));
+        agent.submergedFluids.addAll(((AccessorEntity)player).getSubmergedFluidTag());
+        agent.firstUpdate = ((AccessorEntity)player).getFirstUpdate();
+        agent.box = player.getBoundingBox();
+        agent.dimensions = player.getDimensions(player.getPose());
+        agent.standingEyeHeight = player.getStandingEyeHeight();
+        agent.onGround = player.isOnGround();
+        agent.sleeping = player.isSleeping();
+        agent.sneaking = player.isSneaky();
+        agent.hunger = player.getHungerManager();
+        agent.sprinting = player.isSprinting();
+        agent.swimming = player.isSwimming();
+        agent.fallFlying = player.getAbilities().flying;
+        agent.stepHeight = player.getStepHeight();
+        agent.fallDistance = player.fallDistance;
+        agent.touchingWater = player.isTouchingWater();
+        agent.isSubmergedInWater = player.isSubmergedInWater();
+        agent.horizontalCollision = player.horizontalCollision;
+        agent.verticalCollision = player.verticalCollision;
+        agent.collidedSoftly = player.collidedSoftly;
+        agent.jumping = ((AccessorLivingEntity)player).getJumping();
+        agent.speed = player.hasStatusEffect(StatusEffects.SPEED) ? player.getStatusEffect(StatusEffects.SPEED).getAmplifier() : -1;
+        agent.blindness = player.hasStatusEffect(StatusEffects.BLINDNESS) ? player.getStatusEffect(StatusEffects.BLINDNESS).getAmplifier() : -1;
+        agent.jumpBoost = player.hasStatusEffect(StatusEffects.JUMP_BOOST) ? player.getStatusEffect(StatusEffects.JUMP_BOOST).getAmplifier() : -1;
+        agent.slowFalling = player.hasStatusEffect(StatusEffects.SLOW_FALLING) ? player.getStatusEffect(StatusEffects.SLOW_FALLING).getAmplifier() : -1;
+        agent.dolphinsGrace = player.hasStatusEffect(StatusEffects.DOLPHINS_GRACE) ? player.getStatusEffect(StatusEffects.DOLPHINS_GRACE).getAmplifier() : -1;
+        agent.levitation = player.hasStatusEffect(StatusEffects.LEVITATION) ? player.getStatusEffect(StatusEffects.LEVITATION).getAmplifier() : -1;
+        agent.movementSpeed = player.getMovementSpeed();
+        agent.airStrafingSpeed = 0.06f;
+        agent.jumpingCooldown = ((AccessorLivingEntity)player).getJumpingCooldown();
+        agent.hunger.setFoodLevel(player.getHungerManager().getFoodLevel());
+        agent.hunger.setSaturationLevel(player.getHungerManager().getSaturationLevel());
         //TODO: frame.ticksToNextAutojump
         return agent;
     }
@@ -1470,16 +1964,9 @@ public class Agent {
         agent.keyJump = jump;
         agent.keySneak = sneak;
         agent.keySprint = sprint;
-
-        agent.input.movementSideways = other.input.movementSideways;
-        agent.input.movementForward = other.input.movementForward;
-        agent.input.pressingForward = other.input.pressingForward;
-        agent.input.pressingBack = other.input.pressingBack;
-        agent.input.pressingLeft = other.input.pressingLeft;
-        agent.input.pressingRight = other.input.pressingRight;
-        agent.input.jumping = other.input.jumping;
-        agent.input.sneaking = other.input.sneaking;
-
+        agent.hunger.setFoodLevel(other.hunger.getFoodLevel());
+        agent.hunger.setSaturationLevel(other.hunger.getSaturationLevel());
+        agent.sprinting = other.sprinting;
         agent.pose = other.pose;
         agent.inSneakingPose = other.inSneakingPose;
         agent.usingItem = other.usingItem;
@@ -1533,6 +2020,11 @@ public class Agent {
         agent.jumpingCooldown = other.jumpingCooldown;
         //TODO: frame.ticksToNextAutojump
         return agent;
+    }
+
+    public static Agent of(Agent other, AgentInput input) {
+    	PathInput pI = input.toPathInput();
+    	return of(other, pI);
     }
 
     public static Agent of(Agent agent, PathInput input) {

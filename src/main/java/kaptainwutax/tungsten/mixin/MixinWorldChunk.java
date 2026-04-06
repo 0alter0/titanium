@@ -1,22 +1,9 @@
 package kaptainwutax.tungsten.mixin;
 
-import kaptainwutax.tungsten.TungstenMod;
-import net.minecraft.block.BlockState;
-import net.minecraft.fluid.FluidState;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.network.PacketByteBuf;
-import net.minecraft.network.packet.s2c.play.ChunkData;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.util.registry.Registry;
-import net.minecraft.world.HeightLimitView;
-import net.minecraft.world.World;
-import net.minecraft.world.biome.Biome;
-import net.minecraft.world.chunk.Chunk;
-import net.minecraft.world.chunk.ChunkSection;
-import net.minecraft.world.chunk.UpgradeData;
-import net.minecraft.world.chunk.WorldChunk;
-import net.minecraft.world.gen.chunk.BlendingData;
+import java.util.Map;
+import java.util.function.Consumer;
+
+import net.minecraft.world.chunk.*;
 import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -24,14 +11,27 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.util.function.Consumer;
+import kaptainwutax.tungsten.TungstenMod;
+import kaptainwutax.tungsten.TungstenModDataContainer;
+import net.minecraft.block.BlockState;
+import net.minecraft.fluid.FluidState;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.network.PacketByteBuf;
+import net.minecraft.network.packet.s2c.play.ChunkData;
+import net.minecraft.registry.Registry;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.ChunkPos;
+import net.minecraft.world.HeightLimitView;
+import net.minecraft.world.World;
+import net.minecraft.world.biome.Biome;
+import net.minecraft.world.gen.chunk.BlendingData;
 
 @Mixin(WorldChunk.class)
 public abstract class MixinWorldChunk extends Chunk {
 
-	public MixinWorldChunk(ChunkPos pos, UpgradeData upgradeData, HeightLimitView heightLimitView, Registry<Biome> biome,
+	public MixinWorldChunk(ChunkPos pos, UpgradeData upgradeData, HeightLimitView heightLimitView, PalettesFactory palettesFactory,
 	                       long inhabitedTime, @Nullable ChunkSection[] sectionArrayInitializer, @Nullable BlendingData blendingData) {
-		super(pos, upgradeData, heightLimitView, biome, inhabitedTime, sectionArrayInitializer, blendingData);
+		super(pos, upgradeData, heightLimitView, palettesFactory, inhabitedTime, sectionArrayInitializer, blendingData);
 	}
 
 	@Shadow public abstract World getWorld();
@@ -39,7 +39,10 @@ public abstract class MixinWorldChunk extends Chunk {
 	@Shadow public abstract FluidState getFluidState(BlockPos pos);
 
 	@Inject(method = "loadFromPacket", at = @At("RETURN"))
-	private void loadFromPacket(PacketByteBuf buf, NbtCompound nbt, Consumer<ChunkData.BlockEntityVisitor> consumer, CallbackInfo ci) {
+	private void loadFromPacket(PacketByteBuf buf, Map<BlockPos, NbtCompound> blockEntityTagMap, Consumer<ChunkData.BlockEntityVisitor> consumer, CallbackInfo ci) {
+		if(this.getWorld() != TungstenModDataContainer.world) {
+			TungstenModDataContainer.world = this.getWorld();
+		}
 		if(TungstenMod.WORLD == null || this.getWorld() != TungstenMod.WORLD.parent) {
 			return;
 		}
